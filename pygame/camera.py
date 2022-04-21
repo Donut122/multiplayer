@@ -1,194 +1,105 @@
-import os
-import sys
-import platform
-import warnings
-from abc import ABC, abstractmethod
+#!/usr/bin/env python
+""" pygame.examples.camera
 
-_is_init = 0
+Basic image capturing and display using pygame.camera
 
+Keyboard controls
+-----------------
 
-def _setup_opencv_mac():
-    global list_cameras, Camera, colorspace
-
-    from pygame import _camera_opencv
-
-    try:
-        from pygame import _camera
-    except ImportError:
-        _camera = None
-
-    list_cameras = _camera_opencv.list_cameras_darwin
-    Camera = _camera_opencv.CameraMac
-    if _camera:
-        colorspace = _camera.colorspace
+- 0, start camera 0.
+- 1, start camera 1.
+- 9, start camera 9.
+- 10, start camera... wait a minute! There's not 10 key!
+"""
+import pygame as pg
+import pygame.camera
 
 
-def _setup_opencv():
-    global list_cameras, Camera, colorspace
+class VideoCapturePlayer(object):
 
-    from pygame import _camera_opencv
+    size = (640, 480)
 
-    try:
-        from pygame import _camera
-    except ImportError:
-        _camera = None
+    def __init__(self, **argd):
+        self.__dict__.update(**argd)
+        super(VideoCapturePlayer, self).__init__(**argd)
 
-    list_cameras = _camera_opencv.list_cameras
-    Camera = _camera_opencv.Camera
-    if _camera:
-        colorspace = _camera.colorspace
+        # create a display surface. standard pygame stuff
+        self.display = pg.display.set_mode(self.size)
+        self.init_cams(0)
 
+    def init_cams(self, which_cam_idx):
 
-def _setup__camera():
-    global list_cameras, Camera, colorspace
+        # gets a list of available cameras.
+        self.clist = pygame.camera.list_cameras()
+        print(self.clist)
 
-    from pygame import _camera
+        if not self.clist:
+            raise ValueError("Sorry, no cameras detected.")
 
-    list_cameras = _camera.list_cameras
-    Camera = _camera.Camera
-    colorspace = _camera.colorspace
+        try:
+            cam_id = self.clist[which_cam_idx]
+        except IndexError:
+            cam_id = self.clist[0]
 
+        # creates the camera of the specified size and in RGB colorspace
+        self.camera = pygame.camera.Camera(cam_id, self.size, "RGB")
 
-def _setup_vidcapture():
-    global list_cameras, Camera, colorspace
+        # starts the camera
+        self.camera.start()
 
-    from pygame import _camera_vidcapture
+        self.clock = pg.time.Clock()
 
-    try:
-        from pygame import _camera
-    except ImportError:
-        _camera = None
+        # create a surface to capture to.  for performance purposes, you want the
+        # bit depth to be the same as that of the display surface.
+        self.snapshot = pg.surface.Surface(self.size, 0, self.display)
 
-    warnings.warn(
-        "The VideoCapture backend is not recommended and may be removed."
-        "For Python3 and Windows 8+, there is now a native Windows backend built into pygame.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
+    def get_and_flip(self):
+        # if you don't want to tie the framerate to the camera, you can check and
+        # see if the camera has an image ready.  note that while this works
+        # on most cameras, some will never return true.
 
-    _camera_vidcapture.init()
-    list_cameras = _camera_vidcapture.list_cameras
-    Camera = _camera_vidcapture.Camera
-    if _camera:
-        colorspace = _camera.colorspace
+        self.snapshot = self.camera.get_image(self.display)
 
+        # if 0 and self.camera.query_image():
+        #     # capture an image
 
-def get_backends():
-    possible_backends = []
+        #     self.snapshot = self.camera.get_image(self.snapshot)
 
-    if sys.platform == "win32" and int(platform.win32_ver()[0]) > 8:
-        possible_backends.append("_camera (MSMF)")
+        # if 0:
+        #     self.snapshot = self.camera.get_image(self.snapshot)
+        #     # self.snapshot = self.camera.get_image()
 
-    if "linux" in sys.platform:
-        possible_backends.append("_camera (V4L2)")
+        #     # blit it to the display surface.  simple!
+        #     self.display.blit(self.snapshot, (0, 0))
+        # else:
 
-    if "darwin" in sys.platform:
-        possible_backends.append("OpenCV-Mac")
+        #     self.snapshot = self.camera.get_image(self.display)
+        #     # self.display.blit(self.snapshot, (0,0))
 
-    possible_backends.append("OpenCV")
+        pg.display.flip()
 
-    if sys.platform == "win32":
-        possible_backends.append("VidCapture")
+    def main(self):
+        going = True
+        while going:
+            events = pg.event.get()
+            for e in events:
+                if e.type == pg.QUIT or (e.type == pg.KEYDOWN and e.key == pg.K_ESCAPE):
+                    going = False
+                if e.type == pg.KEYDOWN:
+                    if e.key in range(pg.K_0, pg.K_0 + 10):
+                        self.init_cams(e.key - pg.K_0)
 
-    # see if we have any user specified defaults in environments.
-    camera_env = os.environ.get("PYGAME_CAMERA", "")
-    if camera_env == "opencv":  # prioritize opencv
-        if "OpenCV" in possible_backends:
-            possible_backends.remove("OpenCV")
-        possible_backends = ["OpenCV"] + possible_backends
-    if camera_env == "vidcapture":  # prioritize vidcapture
-        if "VideoCapture" in possible_backends:
-            possible_backends.remove("VideoCapture")
-        possible_backends = ["VideoCapture"] + possible_backends
-
-    return possible_backends
+            self.get_and_flip()
+            self.clock.tick()
+            pygame.display.set_caption(f"CAMERA! ({self.clock.get_fps():.2f} FPS)")
 
 
-backend_table = {
-    "opencv-mac": _setup_opencv_mac,
-    "opencv": _setup_opencv,
-    "_camera (msmf)": _setup__camera,
-    "_camera (v4l2)": _setup__camera,
-    "videocapture": _setup_vidcapture,
-}
-
-
-def init(backend=None):
-    global _is_init
-    # select the camera module to import here.
-
-    backends = get_backends()
-
-    if not backends:
-        _is_init = 1
-        return
-
-    backends = [b.lower() for b in backends]
-
-    if not backend:
-        backend = backends[0]
-    else:
-        backend = backend.lower()
-
-    if backend not in backend_table:
-        raise ValueError("unrecognized backend name")
-
-    if backend not in backends:
-        warnings.warn(
-            "We don't think this is a supported backend on this system, but we'll try it...",
-            Warning,
-            stacklevel=2,
-        )
-
-    backend_table[backend]()
-
-    _is_init = 1
-
-
-def quit():
-    global _is_init
-    _is_init = 0
-
-
-class AbstractCamera(ABC):
-    @abstractmethod
-    def __init__(self, device=0, size=(320, 200), mode="RGB"):
-        """ """
-
-    @abstractmethod
-    def set_resolution(self, width, height):
-        """Sets the capture resolution. (without dialog)"""
-
-    @abstractmethod
-    def start(self):
-        """ """
-
-    @abstractmethod
-    def stop(self):
-        """ """
-
-    @abstractmethod
-    def get_buffer(self):
-        """ """
-
-    @abstractmethod
-    def set_controls(self, **kwargs):
-        """ """
-
-    @abstractmethod
-    def get_image(self, dest_surf=None):
-        """ """
-
-    @abstractmethod
-    def get_surface(self, dest_surf=None):
-        """ """
+def main():
+    pg.init()
+    pygame.camera.init()
+    VideoCapturePlayer().main()
+    pg.quit()
 
 
 if __name__ == "__main__":
-
-    # try and use this camera stuff with the pygame camera example.
-    import pygame.examples.camera
-
-    # pygame.camera.Camera = Camera
-    # pygame.camera.list_cameras = list_cameras
-    pygame.examples.camera.main()
+    main()
